@@ -36,7 +36,30 @@ jobs:
         run: |
           cd "$VII_BUILD"
           ./gradlew --no-daemon build 2>&1 | tee "$GITHUB_WORKSPACE/vii-build.log"
-      - name: Collect development sources and build outputs
+      - name: Export bootstrap API toolchain
+        if: ${{ hashFiles('vii-artifacts/src/**') == '' }}
+        shell: bash
+        run: |
+          mkdir -p "$GITHUB_WORKSPACE/vii-offline/lib"
+          cat > "$RUNNER_TEMP/export.init.gradle" <<'EOF'
+          allprojects { p ->
+            afterEvaluate {
+              tasks.register('viiExportClasspath') {
+                dependsOn tasks.named('compileJava')
+                doLast {
+                  def out = new File(System.getenv('GITHUB_WORKSPACE'), 'vii-offline/lib')
+                  def jars = (configurations.compileClasspath.files + configurations.runtimeClasspath.files).findAll { it.isFile() }
+                  jars.eachWithIndex { f, i -> java.nio.file.Files.copy(f.toPath(), new File(out, String.format('%03d-', i) + f.name).toPath(), java.nio.file.StandardCopyOption.REPLACE_EXISTING) }
+                }
+              }
+            }
+          }
+          EOF
+          cd "$VII_BUILD"
+          ./gradlew --no-daemon -I "$RUNNER_TEMP/export.init.gradle" viiExportClasspath
+          tar -C "$JAVA_HOME" --exclude='./jmods' --exclude='./lib/src.zip' -czf "$GITHUB_WORKSPACE/vii-offline/jdk25.tar.gz" .
+          curl -fL https://repo.maven.apache.org/maven2/org/vineflower/vineflower/1.11.2/vineflower-1.11.2.jar -o "$GITHUB_WORKSPACE/vii-offline/vineflower.jar"
+      - name: Collect build outputs
         if: always()
         shell: bash
         run: |
@@ -59,3 +82,10 @@ jobs:
           name: vii-development-sources
           path: vii-devkit/
           retention-days: 3
+      - uses: actions/upload-artifact@v4
+        if: ${{ always() && hashFiles('vii-artifacts/src/**') == '' }}
+        with:
+          name: vii-offline-toolchain
+          path: vii-offline/
+          retention-days: 1
+          compression-level: 0
