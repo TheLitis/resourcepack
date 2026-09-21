@@ -14,11 +14,13 @@ jobs:
     timeout-minutes: 25
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-java@v4
+      - uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: '25'
       - uses: gradle/actions/setup-gradle@v4
+        with:
+          cache-read-only: false
       - name: Prepare pinned NeoForge workspace
         shell: bash
         run: |
@@ -41,14 +43,15 @@ jobs:
         shell: bash
         run: |
           mkdir -p "$GITHUB_WORKSPACE/vii-offline/lib"
+          tar -C "$JAVA_HOME" --exclude='./jmods' --exclude='./lib/src.zip' -czf "$GITHUB_WORKSPACE/vii-offline/jdk25.tar.gz" .
           cat > "$RUNNER_TEMP/export.init.gradle" <<'EOF'
           allprojects { p ->
-            afterEvaluate {
-              tasks.register('viiExportClasspath') {
-                dependsOn tasks.named('compileJava')
+            p.afterEvaluate {
+              p.tasks.register('viiExportClasspath') {
+                dependsOn p.tasks.named('compileJava')
                 doLast {
                   def out = new File(System.getenv('GITHUB_WORKSPACE'), 'vii-offline/lib')
-                  def jars = (configurations.compileClasspath.files + configurations.runtimeClasspath.files).findAll { it.isFile() }
+                  def jars = (p.configurations.compileClasspath.files + p.configurations.runtimeClasspath.files).findAll { it.isFile() }
                   jars.eachWithIndex { f, i -> java.nio.file.Files.copy(f.toPath(), new File(out, String.format('%03d-', i) + f.name).toPath(), java.nio.file.StandardCopyOption.REPLACE_EXISTING) }
                 }
               }
@@ -56,8 +59,7 @@ jobs:
           }
           EOF
           cd "$VII_BUILD"
-          ./gradlew --no-daemon -I "$RUNNER_TEMP/export.init.gradle" viiExportClasspath
-          tar -C "$JAVA_HOME" --exclude='./jmods' --exclude='./lib/src.zip' -czf "$GITHUB_WORKSPACE/vii-offline/jdk25.tar.gz" .
+          ./gradlew --no-daemon --no-configuration-cache -I "$RUNNER_TEMP/export.init.gradle" viiExportClasspath
           curl -fL https://repo.maven.apache.org/maven2/org/vineflower/vineflower/1.11.2/vineflower-1.11.2.jar -o "$GITHUB_WORKSPACE/vii-offline/vineflower.jar"
       - name: Collect build outputs
         if: always()
