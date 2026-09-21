@@ -1,0 +1,61 @@
+name: VIIArtifacts build
+on:
+  push:
+    branches: [vii-artifacts]
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: vii-artifacts-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '25'
+      - uses: gradle/actions/setup-gradle@v4
+      - name: Prepare pinned NeoForge workspace
+        shell: bash
+        run: |
+          git clone --depth 1 https://github.com/NeoForgeMDKs/MDK-26.2-ModDevGradle.git "$RUNNER_TEMP/vii-build"
+          cd "$RUNNER_TEMP/vii-build"
+          sed -i 's/^neo_version=.*/neo_version=26.2.0.88/' gradle.properties
+          if [ -d "$GITHUB_WORKSPACE/vii-artifacts/src" ]; then
+            rm -rf src
+            cp -a "$GITHUB_WORKSPACE/vii-artifacts/." .
+          fi
+          chmod +x gradlew
+          echo "VII_BUILD=$RUNNER_TEMP/vii-build" >> "$GITHUB_ENV"
+      - name: Compile and test
+        shell: bash
+        run: |
+          cd "$VII_BUILD"
+          ./gradlew --no-daemon build 2>&1 | tee "$GITHUB_WORKSPACE/vii-build.log"
+      - name: Collect development sources and build outputs
+        if: always()
+        shell: bash
+        run: |
+          mkdir -p "$GITHUB_WORKSPACE/vii-output" "$GITHUB_WORKSPACE/vii-devkit/sources"
+          cp "$GITHUB_WORKSPACE/vii-build.log" "$GITHUB_WORKSPACE/vii-output/" 2>/dev/null || true
+          cp "$VII_BUILD"/build/libs/*.jar "$GITHUB_WORKSPACE/vii-output/" 2>/dev/null || true
+          cp -a "$VII_BUILD"/build/test-results "$GITHUB_WORKSPACE/vii-output/" 2>/dev/null || true
+          find "$HOME/.gradle/caches" "$VII_BUILD/build" -type f \( -name '*sources*.jar' -o -name '*source*.jar' \) -size +100k -exec cp -n '{}' "$GITHUB_WORKSPACE/vii-devkit/sources/" \; 2>/dev/null || true
+          cp "$VII_BUILD/build.gradle" "$VII_BUILD/gradle.properties" "$VII_BUILD/settings.gradle" "$GITHUB_WORKSPACE/vii-devkit/"
+          cp -a "$VII_BUILD/gradle" "$VII_BUILD/gradlew" "$VII_BUILD/gradlew.bat" "$GITHUB_WORKSPACE/vii-devkit/"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: vii-artifacts-build
+          path: vii-output/
+          retention-days: 14
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: vii-development-sources
+          path: vii-devkit/
+          retention-days: 3
